@@ -1,0 +1,148 @@
+#! /bin/usr/local/python
+
+from neji.options import NejiOptionParser as Parser
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import neji
+import sys
+import os
+import chalk
+import importlib
+import pkgutil
+import json
+import subprocess
+import time
+
+
+class Reload(FileSystemEventHandler):
+
+    def __init__(self, options, *args, **kwargs):
+        super(Reload, self).__init__(*args, **kwargs)
+        self.options = options
+        self.options.pop('dev')
+        self.options = [
+            ("--" + key, str(val))
+            for key, val in self.options.items() if val
+        ]
+        self.options = [item for sublist in self.options for item in sublist]
+        self.process = subprocess.Popen(
+            ['ng', 'start'] + self.options
+        )
+
+    def on_any_event(self, event):
+        if event.is_directory:
+            return
+        ext = os.path.splitext(event.src_path)[1]
+        if ext == '.py':
+            self.process = self.restart()
+            chalk.eraser()
+            chalk.yellow("Detected changes, restarting...")
+
+    def restart(self):
+        self.process.kill()
+        process = subprocess.Popen(
+            ['ng', 'start'] + self.options
+        )
+        return process
+
+
+if __name__ == "__main__":
+    # =========================================================================
+    # PARSE OPTIONS
+    options, args = Parser.parse_args(sys.argv[1:])
+    options = vars(options)
+    if not args:
+        # print full help in colour if no arguments are provided
+        chalk.red('ERROR:: No args provided\n')
+        chalk.red(Parser.get_usage())
+        chalk.blue(Parser.get_description() + '\n')
+        chalk.green(Parser.format_option_help())
+        sys.exit()
+    action = args[0]
+    if action not in ['start', 'stop']:
+        chalk.red(
+            'ERROR:: action must either be start or stop not "%s".\n'
+            '"ng -h" for help on usage and options.' % action
+        )
+
+    # =========================================================================
+    # detect changes when in dev mode
+    if options.get('dev'):
+        event_handler = Reload(options)
+        observer = Observer()
+        observer.schedule(event_handler, path='.', recursive=True)
+        observer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+            pid = os.getpid()
+            chalk.eraser()
+            chalk.green('\nHendrix successfully closed.')
+            os.kill(pid, 15)
+        observer.join()
+        sys.exit('\n')
+
+    # =========================================================================
+    # START LOGIC
+    if action == 'start':
+        if not options.get('fd'):
+            chalk.blue('Starting neji server...')
+        else:
+            chalk.blue('Starting worker...')
+
+        # expose python path or cwd
+        python_path = options.get('pythonpath') or os.getcwd()
+        if os.path.exists(python_path):
+            sys.path.append(python_path)
+        else:
+            chalk.red(
+                'ERROR:: "%s" is not a valid path' % python_path
+            )
+            sys.exit(1)
+
+        # Set the location of the templates
+        app_dot_path = options.get('app')
+        app = pkgutil.get_loader(app_dot_path)
+        TEMPLATE_DIRS = [
+            os.path.join(os.path.dirname(app.filename), 'templates'),
+        ]
+
+        TEMPLATE_DIRS.append(
+            os.path.join(os.path.dirname(neji.__file__), 'templates')
+        )
+
+        os.environ['TEMPLATE_DIRS'] = json.dumps(TEMPLATE_DIRS)
+
+        # get app module and the app defined root resource
+        try:
+            app = importlib.import_module(app_dot_path)
+        except ImportError:
+            chalk.red(
+                'ERROR:: Could not find %s.py from the app_dot_path %s' % (
+                    app_dot_path.split('.')[-1], app_dot_path
+                )
+            )
+            sys.exit(1)
+        try:
+            root = app.root
+        except AttributeError:
+            chalk.red(
+                'ERROR:: Could not find the root resource. Please ensure that '
+                'the variable "root" is an instance of a Resource and contains'
+                ' the child resources for you app. Refer to http://github.com/'
+                'anthonyalmarza/neji for further information.'
+            )
+            sys.exit(1)
+
+        # spin up the neji server
+        neji.start(root, options)
+
+    # =========================================================================
+    # STOP LOGIC
+    if action == 'stop':
+        chalk.blue('Stopping neji server...')
+        neji.stop(root, options)
+        # find the pid file and kill all the subprocesses associated to the
+        # running server

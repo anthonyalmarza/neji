@@ -1,0 +1,11 @@
+*.pid
+*.pyc
+
+todo.md
+notes.md
+*~
+dev_*
+.DS_Store
+
+venv
+*egg-info
