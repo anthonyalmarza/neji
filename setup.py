@@ -59,10 +59,11 @@ setup(
         'Programming Language :: Python',
         'Topic :: Internet :: WWW/HTTP',
     ],
-    keywords=["twisted", "async", "logging"],
+    keywords=["twisted", "async", "web framework"],
     scripts=['scripts/ng', ],
-    # data_files=[
-    #     (share_path, ['hendrix/utils/templates/init.d.j2', ]),
-    # ],
-    install_requires=readlines('requirements')
+    install_requires=readlines('requirements'),
+    extras_require={
+        'mongo': ['pymongo', ],
+        'redis': ['redis', ]
+    }
 )
